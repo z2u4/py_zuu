@@ -17,6 +17,10 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Check version
+        run: |
+          python .github/scripts/check_version.py 
+
       - name: build release distributions
         run: |
           # NOTE: put your own distribution build steps here.
@@ -42,12 +46,6 @@ jobs:
         with:
           name: release-dists
           path: dist/
-
-      - name: Check version
-       
-        run: |
-          ls
-          python .github/scripts/check_version.py 
 
       - name: Publish release distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
