@@ -9,7 +9,7 @@ on:
       check_version:
         description: 'Check version logic'
         required: false
-        default: 'true'  # Default to true
+        default: 'false'  # Default to true
 
 jobs:
   release-build:
@@ -72,7 +72,7 @@ jobs:
           echo "$current_version" > .github/LAST_VERSION
 
       - name: Commit LAST_VERSION file
-        if: ${{ always() }}  # Ensure this runs regardless of previous step success
+        if: ${{ steps.determine_check.outputs.check_version == 'true' }}
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
