@@ -1,4 +1,5 @@
 import datetime
+import os
 import typing
 import requests
 import io
@@ -181,56 +182,62 @@ def release_meta(
         print(f"Error retrieving release metadata: {e}")
         return None
 
-
 def download_release(
     release_data: dict,
-    asset_name: str = None,
+    asset_names: typing.List[str] = None,  # Accept a list of asset names
     match_type: str = "exact",
-    save_path: typing.Optional[str] = None,
-) -> typing.Optional[typing.Union[io.BytesIO, None]]:
+    save_path: typing.Optional[str] = None,  # Path to save the downloaded assets
+) -> typing.Optional[typing.List[io.BytesIO]]:
     """
-    Downloads a release asset from a GitHub release based on matching criteria.
+    Downloads release assets from a GitHub release based on matching criteria.
 
     Args:
         release_data (dict): The JSON representation of the GitHub release.
-        asset_name (str, optional): The name of the release asset to download. Defaults to None.
+        asset_names (List[str], optional): The names of the release assets to download. Defaults to None.
         match_type (str, optional): The matching criteria for the release asset ("exact", "startswith", "contains", "endswith", "glob").
-        save_path (str, optional): The path to save the downloaded asset. Defaults to None.
+        save_path (str, optional): The path to save the downloaded assets. If a folder is provided, assets will be saved there.
 
     Returns:
-        Optional[Union[io.BytesIO, None]]: If `save_path` is provided, returns None. Otherwise, returns the downloaded asset as a BytesIO object.
+        Optional[List[io.BytesIO]]: If `save_path` is provided, returns None. Otherwise, returns a list of downloaded assets as BytesIO objects.
 
     Raises:
         requests.exceptions.HTTPError: If there is an error in the HTTP response.
     """
+    downloaded_assets = []  # List to hold downloaded assets
     try:
         for asset in release_data.get("assets", []):
-            name_match = (
-                (match_type == "exact" and asset["name"] == asset_name)
-                or (match_type == "startswith" and asset["name"].startswith(asset_name))
-                or (match_type == "contains" and asset_name in asset["name"])
-                or (match_type == "endswith" and asset["name"].endswith(asset_name))
-                or (
-                    match_type == "glob"
-                    and re.match(asset_name, asset["name"]) is not None
+            for asset_name in asset_names or [None]:  # Iterate over asset names
+                name_match = (
+                    (match_type == "exact" and asset["name"] == asset_name)
+                    or (match_type == "startswith" and asset["name"].startswith(asset_name))
+                    or (match_type == "contains" and asset_name in asset["name"])
+                    or (match_type == "endswith" and asset["name"].endswith(asset_name))
+                    or (
+                        match_type == "glob"
+                        and re.match(asset_name, asset["name"]) is not None
+                    )
                 )
-            )
 
-            if name_match:
-                download_url = asset["browser_download_url"]
-                response = requests.get(download_url, stream=True)
-                response.raise_for_status()
+                if name_match:
+                    download_url = asset["browser_download_url"]
+                    response = requests.get(download_url, stream=True)
+                    response.raise_for_status()
 
-                content = io.BytesIO()
-                for block in response.iter_content(1024):
-                    content.write(block)
+                    if save_path:
+                        # Save the asset to the specified folder
+                        file_path = os.path.join(save_path, asset["name"])
+                        with open(file_path, "wb") as file:
+                            for block in response.iter_content(1024):
+                                file.write(block)
+                        continue  # Skip adding to downloaded_assets if saved to disk
 
-                if save_path:
-                    with open(save_path, "wb") as file:
-                        file.write(content.getvalue())
-                    return None
+                    content = io.BytesIO()
+                    for block in response.iter_content(1024):
+                        content.write(block)
 
-                return content
+                    downloaded_assets.append(content)  # Add to the list of downloaded assets
+
+        return downloaded_assets  # Return the list of downloaded assets
     except requests.exceptions.RequestException as e:
         print(f"Error downloading release asset: {e}")
         return None

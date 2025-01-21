@@ -43,5 +43,10 @@ jobs:
           name: release-dists
           path: dist/
 
+      - name: Check version
+        if: github.event_name != 'workflow_dispatch'  # Skip if manually triggered
+        run: |
+          python .github/scripts/check_version.py 
+
       - name: Publish release distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
