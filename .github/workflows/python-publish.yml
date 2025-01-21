@@ -4,11 +4,6 @@ on:
   push:
     paths:
       - 'pyproject.toml'
-  workflow_dispatch:
-    inputs:
-      last_version:
-        description: 'Last run version'
-        required: true
 
 jobs:
   release-build:
@@ -29,7 +24,7 @@ jobs:
           echo "Current version: $current_version"
 
           # Get the last run version from GitHub variable
-          last_version="${{ github.event.inputs.last_version }}"
+          last_version="${{ secrets.LAST_VERSION }}"
           echo "Last version: $last_version"
 
           # Compare versions
