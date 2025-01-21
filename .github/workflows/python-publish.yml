@@ -5,6 +5,10 @@ on:
     paths:
       - 'pyproject.toml'
   workflow_dispatch:
+    inputs:
+      last_version:
+        description: 'Last run version'
+        required: true
 
 jobs:
   release-build:
@@ -17,10 +21,28 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Check version
+      - name: Check Minor Version Change
+        id: check_version
         run: |
-          python -m pip install toml
-          python .github/scripts/check_version.py 
+          # Get the current version from pyproject.toml
+          current_version=$(grep 'version =' pyproject.toml | cut -d '"' -f 2)
+          echo "Current version: $current_version"
+
+          # Get the last run version from GitHub variable
+          last_version="${{ github.event.inputs.last_version }}"
+          echo "Last version: $last_version"
+
+          # Compare versions
+          IFS='.' read -r -a current_parts <<< "$current_version"
+          IFS='.' read -r -a last_parts <<< "$last_version"
+
+          if [ "${current_parts[0]}" -eq "${last_parts[0]}" ] && [ "${current_parts[1]}" -gt "${last_parts[1]}" ]; then
+            echo "Minor version has changed. Terminating workflow."
+            exit 1
+          fi
+
+          # Store the current version for future runs
+          echo "current_version=$current_version" >> $GITHUB_ENV
 
       - name: build release distributions
         run: |
