@@ -63,8 +63,9 @@ jobs:
           IFS='.' read -r -a current_parts <<< "$current_version"
           IFS='.' read -r -a last_parts <<< "$last_version"
 
-          if [ "${current_parts[0]}" -eq "${last_parts[0]}" ] && [ "${current_parts[1]}" -gt "${last_parts[1]}" ]; then
-            echo "Minor version has changed. Terminating workflow."
+          # Check if major versions are the same and minor version has changed
+          if [ "${current_parts[0]}" -eq "${last_parts[0]}" ] && [ "${current_parts[1]}" -ne "${last_parts[1]}" ]; then
+            echo "Only minor version has changed. Terminating workflow."
             exit 1
           fi
 
