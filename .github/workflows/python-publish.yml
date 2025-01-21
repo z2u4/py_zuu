@@ -72,7 +72,7 @@ jobs:
           echo "$current_version" > .github/LAST_VERSION
 
       - name: Commit LAST_VERSION file
-        if: ${{ steps.determine_check.outputs.check_version == 'true' }}
+        if: ${{ env.check_version == 'true' }}
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
