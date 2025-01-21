@@ -3,7 +3,7 @@ import toml
 def get_version():
     # Load the pyproject.toml file
     pyproject = toml.load("pyproject.toml")
-    return pyproject["tool"]["poetry"]["version"]
+    return pyproject["project"]["version"]
 
 def is_minor_version_change(old_version, new_version):
     old_major, old_minor, old_patch = map(int, old_version.split('.'))
