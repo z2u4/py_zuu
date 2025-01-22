@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import tempfile
 from functools import wraps
@@ -87,8 +88,9 @@ def tempdir_op(
                             if (
                                 not pattern
                                 or pattern == "*"
-                                or item.startswith(pattern.rstrip("*"))
+                                or re.match(pattern, item)
                             ):
+                                
                                 src = os.path.join(temp_dir, item)
                                 dst = os.path.join(target, item)
                                 if os.path.isdir(src):
