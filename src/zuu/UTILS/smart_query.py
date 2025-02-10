@@ -1,96 +1,243 @@
-from functools import cache
+import json
 import re
+import typing
 
-class SmartQuery:
-    @classmethod
-    @cache
-    def format(cls, query: str, gck: tuple | None = None):
-        # Replace | with or and & with and, but only if they are not within quotes
-        query = re.sub(r'(?<!["\'])\|(?!"|\')', ' or ', query)
-        query = re.sub(r'(?<!["\'])&(?!"|\')', ' and ', query)
+nlp_like = {
+    "(\\w+) contains (\\w+)": "CONTAINS(\\1, \"\\2\")",
+    "(\\w+) is (\\w+)": "\\1 == \"\\2\"",
+    "(\\w+) startswith (\\w+)": "\\1.startswith(\"\\2\")",
+    "(\\w+) endswith (\\w+)": "\\1.endswith(\"\\2\")",
+    "(\\w+) pattern of (.*)": "REGEX(\\1, \"\\2\")",
+}
+
+def regex_func(x, y, ignore_case = True):
+    if ".*" not in y:
+        y = y.replace("*", ".*")
+
+    if ".?" not in y:
+        y = y.replace("?", ".?")
+
+    try:
+        return re.fullmatch(y, x, re.IGNORECASE if ignore_case else 0) is not None
+    except re.error:
+
+        return False
+
+
+funcs_maps = {
+    "CONTAINS": lambda container, substring: substring in container,
+    "REGEX" : lambda x, y, ignore_case = False : regex_func(x, y, ignore_case),
+    "REGEXI" : regex_func,
+}
+
+def _parse_symbols_logic2(query : str):
+    in_quote = False
+    current_quote = None
+    i = 0
+    while i < len(query):
+        char = query[i]
+        if char in "\"'":
+            if not in_quote:
+                current_quote = char
+                in_quote = True
+            elif char == current_quote:
+                in_quote = False
+            i += 1
+            continue
         
-        query = query.replace('!', ' not ')
-
-        if gck is None:
-            query = re.sub(r'\s+', ' ', query).strip()
-            return query
-
-        components = re.split(r'(?m)(?<=\s)(?:and|or|\(|\)|\!|not)(?=\s)', query, flags=re.IGNORECASE)
-
-        for comp in components:
-            ocomp = comp
-            if comp in ['and', 'or', '(', ')', '!', 'not']:
-                continue
-            
-            # Check for method calls
-            if "(" in comp and (match := re.match(r'(\w+)\.\w+\((\w+)\)', comp)):
-                field_name, value = match.groups()
-                if value not in gck and not value.isdigit():
-                    comp = comp.replace(value, f"'{value}'")  # Convert to string if not in gck
-
-            elif "=" in comp:
-                if "==" in comp:
-                    comp = comp.replace("==", "=")
-
-                key, value = comp.split("=")
-                key = key.strip()
-                value = value.strip()
-                valueAlpha = re.sub(r'[^a-zA-Z]', '', value)
-
-                if valueAlpha in gck or value.isdigit():
-                    comp = f"{key} == {value}"  # Keep as is if in gck
-                elif ("?" in value or "*" in value):
-                    comp = f" re.match(r'{value}', {key}) "  # Convert to regex if not in gck
-                else:
-                    comp = f" {key} == '{value}' "  # Convert to string
-
-            query = query.replace(ocomp, comp)
-
-        query = re.sub(r'\s+', ' ', query).strip()
-        return query
-    
-
-    @classmethod
-    def gck(cls, items : list, trust : bool = True):
-        if trust:
-            if isinstance(items, dict):
-                return tuple(items.keys())
-            else:
-                return tuple(item.__dict__.keys() for item in items if not item.startswith('_'))
-        
-        common_keys = set(items[0].keys())
-        for item in items[1:]:
-            common_keys &= set(item.keys())
-        return tuple(common_keys)
-
-    @classmethod
-    def match(cls, item, query : str, ctx = {}, gck : bool = True, gck_trust : bool = True):
-        gck_ = cls.gck(item, gck_trust) if gck else None
-        query = cls.format(query, gck_)
-        if isinstance(item, dict):
-            ctx.update(item)
+        if not in_quote and char in "&|!":
+            if char == "&":
+                query = query[:i] + " and " + query[i+1:]
+                i += 5
+            elif char == "|":
+                query = query[:i] + " or " + query[i+1:]
+                i += 4
+            elif char == "!":
+                query = query[:i] + " not " + query[i+1:]
+                i += 5
         else:
-            ctx.update(item.__dict__)
+            i += 1
+            
+    return query
+
+def _parse_symbols_logic(query : str):
+    in_quote = False
+    current_quote = None
+    i = 0
+    query_list = list(query)
+    while i < len(query_list):
+        char = query_list[i]
+        if char in "\"'":
+            if not in_quote:
+                current_quote = char
+                in_quote = True
+            elif char == current_quote:
+                in_quote = False
+            i += 1
+            continue
         
-        return eval(query, ctx)
+        if not in_quote:
+            if char == "&" and i+1 < len(query_list) and query_list[i+1] == "&":
+                query_list[i:i+2] = list(" and ")
+                i += 5
+            elif char == "|" and i+1 < len(query_list) and query_list[i+1] == "|":
+                query_list[i:i+2] = list(" or ")
+                i += 4
+            elif char == "!":
+                query_list[i:i+1] = list(" not ")
+                i += 5
+            else:
+                i += 1
+        else:
+            i += 1
+            
+    return ''.join(query_list)
+
+def _collapse_spaces(query : str):
+    new_query = []
+    in_quote = False
+    current_quote = None
+    prev_was_space = False
     
+    for char in query:
+        if char in "\"'":
+            if not in_quote:
+                current_quote = char
+                in_quote = True
+            elif char == current_quote:
+                in_quote = False
+            new_query.append(char)
+            prev_was_space = False
+        elif in_quote:
+            new_query.append(char)
+            prev_was_space = False
+        else:
+            if char == ' ':
+                if not prev_was_space:
+                    new_query.append(' ')
+                prev_was_space = True
+            else:
+                new_query.append(char)
+                prev_was_space = False
+                
+    return ''.join(new_query)
+
+
+class QueryObj:
     @classmethod
-    def all(cls, items, query : str, passList : bool = False):
+    def parse(cls, query : str):
+        stats = {
+            "isCompound" : False,
+            "simple" : False
+        }
+
+        # if theres no space in query, consider it as a regex pattern
+        if " " not in query and "(" not in query:
+            query = "REGEX({default}, \"{query}\")".replace("{query}", query)
+            stats["simple"] = True
+        elif " and " in query or " or " in query or "not " in query:
+            stats["isCompound"] = True
+        elif any(char in query for char in ["&&", "||", "!"]) and (query2 := _parse_symbols_logic(query)) != query:
+            stats["isCompound"] = True
+            query = query2
+        elif any(char in query for char in "&|!") and (query2 := _parse_symbols_logic2(query)) != query:
+            stats["isCompound"] = True
+            query = query2
+
+        # match all the nlp like queries and replace them to correct value
+        if not stats["simple"]:
+            for pattern, replacement in nlp_like.items():
+                query = re.sub(pattern, replacement, query)
+
+        # Collapse multiple spaces outside quotes
+        query = _collapse_spaces(query)
+        query = query.strip()
+
+        return QueryObj(query, stats)
+
+    def __init__(self, query : str, stats : dict):
+        self.query = query
+        self.stats = stats
+        self.__objectSerializable = None    
+        self.__cache = {}
+
+        self.__cachedFunc = None
+        self.__defaultKey : str | None = None
         
 
-        for item in items:
-            ctx = {"re" : re}
-            if passList:
-                ctx['items'] = items
-            if cls.match(item, query, ctx):
-                yield item
+    def __toDictRepresentation(self, obj : typing.Any):
+        def _func(obj):
+            if isinstance(obj, (list, tuple, int, float, bool, str)):
+                return {"value" : obj}
+            
+            if isinstance(obj, dict):
+                return obj
 
-    @classmethod
-    def first(cls, items, query : str, ctx = {}):
-        for item in cls.all(items, query, ctx):
-            return item
-        return None
-    
-    @classmethod
-    def any(cls, items, query : str, ctx = {}):
-        return cls.first(items, query, ctx) is not None
+            if hasattr(obj, "__dict__"):
+                return {
+                    k: v for k, v in obj.__dict__.items() if not k.startswith("_")
+                }
+            
+        res = _func(obj)
+        if not res:
+            return None
+
+        return {
+            k : str(v) if isinstance(v, (int, float)) else v for k, v in res.items()
+        }
+
+
+
+    def __toCacheKey(self, obj : typing.Any):
+        if isinstance(obj, (tuple, int, float, bool, str)):
+            return obj
+
+        try:
+            return json.dumps(obj)
+        except: # noqa
+            pass
+
+    def __func_maker(self, data : dict):
+        def func(data : dict):
+            query =  self.query.replace("{default}", self.__defaultKey) if self.__defaultKey else self.query
+            try:
+                return eval(
+                    query,
+                    {
+
+                    **funcs_maps,
+                    "x" : data,
+                    **{k : v for k, v in data.items() if not k.startswith("_")}
+                }
+                )
+            except NameError:
+                return False
+
+        return func
+
+
+    def validate(self, obj : typing.Any):
+        if self.__objectSerializable is None:
+            self.__objectSerializable = self.__toCacheKey(obj) is not None
+
+        if self.__objectSerializable and self.__cache is None:
+            self.__cache = {}
+
+        rep = self.__toDictRepresentation(obj)
+        if not self.__defaultKey:
+            self.__defaultKey = next(iter(rep.keys())) if rep else None
+
+        if not self.__cachedFunc:
+            self.__cachedFunc = self.__func_maker(rep)
+
+        if not self.__objectSerializable:
+            return self.__cachedFunc(rep)
+        
+        cacheKey = self.__toCacheKey(rep)
+        if cacheKey in self.__cache:
+            return self.__cache[cacheKey]
+
+        self.__cache[cacheKey] = self.__cachedFunc(rep)
+        return self.__cache[cacheKey]
+        
+__all__ = ["QueryObj"]
