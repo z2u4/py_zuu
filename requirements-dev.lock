@@ -12,7 +12,7 @@
 --index-url https://pypi.org/simple/
 
 -e file:.
-certifi==2024.12.14
+certifi==2025.1.31
     # via requests
 charset-normalizer==3.4.1
     # via requests
@@ -20,7 +20,7 @@ colorama==0.4.6
     # via pytest
 croniter==6.0.0
     # via zuu
-dateparser==1.2.0
+dateparser==1.2.1
     # via zuu
 idna==3.10
     # via requests
@@ -33,7 +33,7 @@ jaraco-context==6.0.1
 jaraco-functools==4.1.0
     # via keyring
 keyring==25.6.0
-more-itertools==10.5.0
+more-itertools==10.6.0
     # via jaraco-classes
     # via jaraco-functools
 packaging==24.2
@@ -52,7 +52,7 @@ pytest==8.3.4
 python-dateutil==2.9.0.post0
     # via croniter
     # via dateparser
-pytz==2024.2
+pytz==2025.1
     # via croniter
     # via dateparser
 pywin32==308
@@ -70,7 +70,7 @@ six==1.17.0
     # via python-dateutil
 toml==0.10.2
     # via zuu
-tzdata==2024.2
+tzdata==2025.1
     # via tzlocal
 tzlocal==5.2
     # via dateparser
