@@ -1,33 +1,121 @@
 import threading
 import re
 from functools import wraps
-from datetime import datetime
+import datetime
 from ..time_parse import time_parse
+from typing import Union, Callable, Any, Optional, Set
+import psutil
+import pygetwindow as gw
+import time
+
+def glob_to_regex(glob_pattern: str) -> str:
+    """Convert glob pattern to regex pattern"""
+    return glob_pattern.replace('*', '.*').replace('?', '.').lower()
+
+def match_windows(patterns: Union[bool, list[str]]) -> Set[int]:
+    """Return set of window handles matching patterns"""
+    if patterns is None:
+        return set()
+        
+    windows = gw.getAllWindows()
+    if patterns is True:
+        return {win._hWnd for win in windows}
+        
+    regex_patterns = [glob_to_regex(p) for p in patterns]
+    return {
+        win._hWnd for win in windows
+        if any(re.search(p, win.title.lower()) for p in regex_patterns)
+    }
+
+def match_processes(patterns: Union[bool, list[str]]) -> Set[int]:
+    """Return set of process PIDs matching patterns"""
+    if patterns is None:
+        return set()
+        
+    procs = psutil.Process().children(recursive=True)
+    if patterns is True:
+        return {proc.pid for proc in procs}
+        
+    regex_patterns = [glob_to_regex(p) for p in patterns]
+    matched = set()
+    for proc in procs:
+        try:
+            name = proc.name().lower()
+            cmdline = ' '.join(proc.cmdline()).lower()
+            if any(re.search(p, name) or re.search(p, cmdline) for p in regex_patterns):
+                matched.add(proc.pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return matched
+
+def cleanup(
+    windows: Optional[Union[bool, list[str]]] = None,
+    processes: Optional[Union[bool, list[str]]] = None,
+    new_only: bool = False
+) -> Callable:
+    """Decorator to clean up windows/processes with proper state diffing"""
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> Any:
+            # Determine which resources to track/clean
+            use_windows = windows not in (None, False)
+            use_procs = processes not in (None, False)
+
+            # Pre-execution state (only track if needed)
+            pre_wins = set()
+            pre_procs = set()
+            if new_only:
+                if use_windows:
+                    pre_wins = match_windows(windows)
+                if use_procs:
+                    pre_procs = match_processes(processes)
+
+            # Execute function
+            result = func(*args, **kwargs)
+
+            # Post-execution state (only check if needed)
+            post_wins = match_windows(windows) if use_windows else set()
+            post_procs = match_processes(processes) if use_procs else set()
+
+            # Calculate targets
+            win_targets = (post_wins - pre_wins) if new_only else post_wins
+            proc_targets = (post_procs - pre_procs) if new_only else post_procs
+
+            # Resource cleanup
+            if use_windows:
+                for hwnd in win_targets:
+                    try:
+                        gw.Win32Window(hwnd).close()
+                    except Exception:
+                        pass
+
+            if use_procs:
+                for pid in proc_targets:
+                    try:
+                        proc = psutil.Process(pid)
+                        proc.terminate()
+                        proc.wait(timeout=3)
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+
+            return result
+        return wrapper
+    return decorator
 
 def lifetime(
     timestr: str,
-    diffInit: bool = True,
-    globs: list[str] = [],
-    usePsutil: bool = True,
-    usePygetwindow: bool = True,
 ):
     def decorator(func):
-        # Store initial state if diffInit is True
-        initial_windows = set()
-        initial_procs = set()
-        if diffInit:
-            if usePygetwindow:
-                import pygetwindow as gw
-                initial_windows = {win._hWnd for win in gw.getAllWindows()}
-            if usePsutil:
-                import psutil
-                initial_procs = {proc.pid for proc in psutil.Process().children(recursive=True)}
-
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Get target termination time
+            # Get target termination time and ensure it's a timestamp
             target_time = time_parse(timestr)
-
+            if isinstance(target_time, datetime.datetime):
+                target_time = target_time.timestamp()
+            
             # Start the function in a separate thread
             result = [None]
             exception = [None]
@@ -43,69 +131,12 @@ def lifetime(
             thread.start()
 
             # Wait until target time
-            while datetime.now() < target_time and thread.is_alive():
+            while time.time() < target_time and thread.is_alive():
                 thread.join(timeout=0.1)
 
-            # If thread is still running at target time, terminate
-            if thread.is_alive():
-                # Track which globs were matched by pygetwindow
-                matched_globs = set()
-
-                if usePygetwindow:
-                    import pygetwindow as gw
-                    current_windows = gw.getAllWindows()
-                    for window in current_windows:
-                        # Skip if using diffInit and window existed before
-                        if diffInit and window._hWnd in initial_windows:
-                            continue
-                            
-                        window_title = window.title.lower()
-                        for glob_pattern in globs:
-                            regex_pattern = glob_pattern.replace('*', '.*').replace('?', '.').lower()
-                            if re.search(regex_pattern, window_title):
-                                matched_globs.add(glob_pattern)
-                                try:
-                                    window.close()
-                                except: #noqa
-                                    pass
-
-                if usePsutil:
-                    import psutil
-                    current_process = psutil.Process()
-                    for proc in current_process.children(recursive=True):
-                        # Skip if using diffInit and process existed before
-                        if diffInit and proc.pid in initial_procs:
-                            continue
-                            
-                        try:
-                            # Only check globs that weren't matched by pygetwindow
-                            proc_name = proc.name().lower()
-                            proc_cmdline = ' '.join(proc.cmdline()).lower()
-                            
-                            for glob_pattern in globs:
-                                if glob_pattern in matched_globs:
-                                    continue
-                                    
-                                regex_pattern = glob_pattern.replace('*', '.*').replace('?', '.').lower()
-                                if (re.search(regex_pattern, proc_name) or 
-                                    re.search(regex_pattern, proc_cmdline)):
-                                    proc.terminate()
-                                    try:
-                                        proc.wait(timeout=3)
-                                    except psutil.TimeoutExpired:
-                                        proc.kill()
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            continue
-
-                # Re-raise any exception that occurred
-                if exception[0]:
-                    raise exception[0]
-                
-                return result[0]
-
-            # Return the result if completed in time
-            if exception[0]:
+            if exception[0] is not None:
                 raise exception[0]
+            
             return result[0]
 
         return wrapper
