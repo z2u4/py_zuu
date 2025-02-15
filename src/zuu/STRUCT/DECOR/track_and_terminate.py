@@ -127,7 +127,11 @@ def lifetime(
             thread = threading.Thread(target=run_func)
             thread.daemon = True
             thread.start()
-            thread.join(timeout=(target_time - datetime.datetime.now()).total_seconds())
+            wait_time = (target_time - datetime.datetime.now()).total_seconds()
+            if wait_time < 0:
+                wait_time = 0
+
+            thread.join(timeout=wait_time)
 
             if exception[0] is not None:
                 raise exception[0]

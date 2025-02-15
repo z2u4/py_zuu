@@ -66,7 +66,7 @@ def time_parse(time_str: str | float | int):
         and time_str.count(".") <= 1
         and time_str.replace(".", "").isdigit()
     ):
-        return datetime.fromtimestamp(float(time_str))
+        return datetime.now() + timedelta(seconds=float(time_str))
 
     # Handle string inputs
     if isinstance(time_str, str):
