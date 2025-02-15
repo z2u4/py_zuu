@@ -14,10 +14,7 @@ def mock_processes():
         yield mock
 
 class TestLifetimeDecorator:
-    @patch('src.zuu.STRUCT.DECOR.track_and_terminate.time_parse')
-    def test_termination(self, mock_time_parse):
-        # Set termination time 0.1 seconds in future
-        mock_time_parse.return_value = time.time() + 0.1
+    def test_termination(self):
 
         @lifetime("100ms")
         def long_running():

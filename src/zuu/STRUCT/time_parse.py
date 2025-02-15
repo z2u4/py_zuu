@@ -28,8 +28,37 @@ def time_parse(time_str: str | float | int):
         ImportError: If required modules dateparser or croniter are not installed
         ValueError: If the time string cannot be parsed
     """
+    
+
     from datetime import datetime, timedelta
     import re
+
+    if isinstance(time_str, str) and time_str == "* * * * *":
+        return datetime.now()
+    
+    if isinstance(time_str, str) and time_str == "now":
+        return datetime.now()
+
+    # Try parsing combined date + duration format
+    if isinstance(time_str, str) and '+' in time_str:
+        parts = [part.strip() for part in time_str.split('+')]
+        if len(parts) < 2:
+            raise ValueError("Invalid combined format")
+        
+        try:
+            # Parse base time from first part
+            base_time = time_parse(parts[0])
+            
+            # Calculate total duration from subsequent parts
+            total_duration = timedelta()
+            for duration_part in parts[1:]:
+                duration_time = time_parse(duration_part)
+                duration = duration_time - datetime.now()
+                total_duration += duration
+            
+            return base_time + total_duration
+        except ValueError:
+            pass
 
     # Handle numeric timestamps
     if isinstance(time_str, (int, float)) or (
@@ -41,7 +70,7 @@ def time_parse(time_str: str | float | int):
 
     # Handle string inputs
     if isinstance(time_str, str):
-        # Try parsing as time units
+        # Try parsing as time units (supports multiple units now)
         time_units = {
             'ms': ('milliseconds', ['ms', 'millisecond', 'milliseconds']),
             's': ('seconds', ['s', 'sec', 'secs', 'second', 'seconds']),
@@ -51,37 +80,46 @@ def time_parse(time_str: str | float | int):
             'w': ('weeks', ['w', 'week', 'weeks'])
         }
 
-        # Clean up input string
         time_str = time_str.lower().strip()
+        total_delta = timedelta()
+        valid_units = True
         
-        # Match number and unit (e.g., "500ms", "1.5h", "2 hours")
-        match = re.match(r'^([\d.]+)\s*([a-z]+)$', time_str)
-        if match:
-            value, unit = match.groups()
-            try:
-                value = float(value)
+        # Find all (value, unit) pairs in the string
+        matches = re.findall(r'(\d+\.?\d*)\s*([a-z]+)', time_str)
+        if matches:
+            # Verify entire string is consumed by matches
+            reconstructed = ''.join(f"{v}{u}" for v, u in matches)
+            if reconstructed.replace(' ', '') != time_str.replace(' ', ''):
+                valid_units = False
+            else:
+                for value_str, unit in matches:
+                    try:
+                        value = float(value_str)
+                        matched = False
+                        for base_unit, (delta_attr, variants) in time_units.items():
+                            if unit in variants:
+                                total_delta += timedelta(**{delta_attr: value})
+                                matched = True
+                                break
+                        if not matched:
+                            valid_units = False
+                            break
+                    except ValueError:
+                        valid_units = False
+                        break
                 
-                # Find matching unit
-                for base_unit, (delta_attr, variants) in time_units.items():
-                    if unit in variants:
-                        kwargs = {delta_attr: value}
-                        return datetime.now() + timedelta(**kwargs)
-            except ValueError:
-                pass
+                if valid_units:
+                    return datetime.now() + total_delta
 
-        # Try parsing as cron expression
-        if any(c in time_str for c in "*/,"):
-            try:
-                from croniter import croniter
-            except ImportError:
-                raise ImportError("croniter module is required for cron expression parsing")
-                
-            try:
-                base = datetime.now()
-                cron = croniter(time_str, base)
-                return cron.get_next(datetime)
-            except ValueError:
-                pass
+        # Try parsing as cron expression (fixed return type)
+        try:
+            from croniter import croniter
+            base = datetime.now()
+            cron = croniter(time_str, base)
+            next_time = cron.get_next(datetime, datetime.now())
+            return next_time
+        except (ImportError, TypeError, ValueError):
+            pass
 
         # Try parsing with dateparser
         try:

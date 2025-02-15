@@ -112,12 +112,10 @@ def lifetime(
         @wraps(func)
         def wrapper(*args, **kwargs):
             # Get target termination time and ensure it's a timestamp
-            target_time = time_parse(timestr)
-            if isinstance(target_time, datetime.datetime):
-                target_time = target_time.timestamp()
+            target_time : datetime.datetime = time_parse(timestr)
             
             # Start the function in a separate thread
-            result = [None]
+            result = [None] 
             exception = [None]
             
             def run_func():
@@ -129,10 +127,7 @@ def lifetime(
             thread = threading.Thread(target=run_func)
             thread.daemon = True
             thread.start()
-
-            # Wait until target time
-            while time.time() < target_time and thread.is_alive():
-                thread.join(timeout=0.1)
+            thread.join(timeout=(target_time - datetime.datetime.now()).total_seconds())
 
             if exception[0] is not None:
                 raise exception[0]
